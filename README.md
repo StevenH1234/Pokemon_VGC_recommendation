@@ -35,3 +35,13 @@ I don't want to get abandon this project like I have many times in the past. I w
 
 7. recommendation algorithm
    - use the score to simulate teams and rank their competitive viability.
+
+THINGS LEARNED:
+
+- Scrollable divs act like tables but can operate dynamically on webpages
+
+ISSUES FOUND:
+
+- all paradox forms exist in pokeAPI but the way they are deonted in smogon it cannot be accessed
+- NOT every pokemon is in scarlet and violet. we would have to account for different games and formats
+- Think about the regulations (reg I, reg H, reg G, etc.)
