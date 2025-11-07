@@ -6,13 +6,21 @@ import time
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 import pokebase as pb
+import os
+import json
 
 # TODO: code works well for scraping the SV era of pokemon competitive play, but not others. Adapt the code to account for each generation of pokemon (champions and gen 10)
 # TODO: May need to address the pokemon with forms and how to id them in the data frame.
-# TODO: Be more specific about the exceptions being reaised. 
+# TODO: Be more specific about the exceptions being reaised (Structured logging instead of prints). 
+# TODO: too many API calls, we need a caching system. 
+
+# TODO: Probably only want to init the driver when parsing the data. If the cache exists we dont need the webdriver
+# TODO: Either get the IDs and save them so we can access pokeapi's sprites or just go with the models from the smogon.(will take more time but will look best with the API sprites)
 
 SMOGON_URL = "https://www.smogon.com/dex/sv/pokemon/"
 POKEAPI_URL = "https://pokeapi.co/api/v2/pokemon-species/"
+CACHE_DIR = "pokemon_cache"
+SMOGON_CACHE_DIR = "smogon_cache"
 TYPES = ['Fire', 'Water', 'Grass', 'Electric', 'Ground', 'Rock', 'Normal', 'Bug', 'Flying', 'Ice', 'Ghost', 'Dark', 'Fighting', 'Psychic', 'Fairy', 'Steel', 'Dragon', 'Poison', 'None']
 FORMATS = ['Uber', 'OU', 'UU', 'RU', 'NU', 'PU', 'ZU', 'AG', 'NFE', 'LC', 'UUBL', 'RUBL', 'NUBL', 'PUBL', 'ZUBL']
 
@@ -53,14 +61,23 @@ class PokemonScraper():
             pokemon_data_list (list) - list containing all the html that is scrolled through
         """
 
+        # if the smogon cache contains the list, load data from the cache
+        smogon_cache_path = os.path.join(SMOGON_CACHE_DIR, "data_list.json")
+        if os.path.exists(smogon_cache_path):
+            print("path exists... driver is not scrolling")
+            with open(smogon_cache_path, 'r') as f:
+                return json.load(f)
+        
         # init variables
-        pokemon_data_list = set()
+        pokemon_data_list = set()       
+        self.init_driver()
         self.driver.get(self.smogon_url)
         window_height = self.driver.execute_script("return window.innerHeight")
         scroll_height = self.driver.execute_script("return document.body.scrollHeight")
         current_height = 0
 
         try:
+            
             # scroll until the webpage reaches part of the table that has a "DexNonstd" class name
             while current_height < scroll_height:
                 current_height += window_height
@@ -73,14 +90,20 @@ class PokemonScraper():
                     break
 
                 # collect the html from this pass and add it to the data list
-                res = BeautifulSoup(html, "html.parser")
-                pokemon_data_list.add(res)
+                pokemon_data_list.add(html)
 
                 self.driver.execute_script(f"window.scrollTo(0, {current_height});")
 
                 time.sleep(1)
 
-            return list(pokemon_data_list)
+            # dump the data into the cache
+            pokemon_data_list = list(pokemon_data_list)
+            smogon_cache_path = os.path.join(SMOGON_CACHE_DIR, "data_list.json")
+            with open(smogon_cache_path, "w") as f:
+                json.dump(pokemon_data_list, f, indent=4)
+
+            self.close_driver()
+            return pokemon_data_list
         
         except requests.exceptions.RequestException as e:
             print(f"error fetching {self.smogon_url}: {e}") 
@@ -100,7 +123,8 @@ class PokemonScraper():
 
         # iterate through the list of smogon html and extract metadata from each section of the table
         for html in smogon_html:
-            for i in html:
+            bs = BeautifulSoup(html, "html.parser")
+            for i in bs:
                 pkm_attr = [t for t in i.stripped_strings]
                 attributes.append(self.normalize_attributes(pkm_attr, ability_list)) # clean and add the metadata to the attributes list
         return attributes
@@ -119,7 +143,7 @@ class PokemonScraper():
         """
 
         new_attr_list = []
-        pokemon_number = get_pokemon_number(attr_list[0])
+        pokemon_number = get_pokemon_dex_number(attr_list[0])
 
         # if a pokemon has an associated dex number then process the data, otherwise remove the attributes all together 
         if pokemon_number:
@@ -161,7 +185,25 @@ class PokemonScraper():
         else:
             print(f"removed {attr_list}")
         
+        new_attr_list
         return new_attr_list
+
+def cache_pokemon_json(pokemon, json_data):
+    """
+    creates a dedicated path for the pokemon json file and stores it in the local cache
+
+    Args:
+        pokemon (str): name of the pokemon as a string
+        json_data (dict): python json_data dictionary object containing data from PokeAPI
+    """
+    os.makedirs(CACHE_DIR, exist_ok=True)
+
+    cache_path = os.path.join(CACHE_DIR, f"{pokemon}.json")
+
+    with open(cache_path, "w") as f:
+        json.dump(json_data, f, indent=4)
+    # print("cached complete...")
+
 
 def get_pokemon(pokemon):
 
@@ -182,20 +224,39 @@ def get_pokemon(pokemon):
         # some pokemon have two word names (i.e. walking wake, raging bolt, flutter mane, etc.) add a dash to help find these pokemon in the api
         if " " in pokemon:
             pokemon = pokemon.replace(' ', '-')
-        response = requests.get(POKEAPI_URL + "/" + pokemon)
-        return response.json()
+
+        # check if it is cached
+        cache_path = os.path.join(CACHE_DIR, f"{pokemon}.json")
+        if os.path.exists(cache_path):
+             with open(cache_path, 'r') as f:
+                 return json.load(f)
+        else:
+            response = requests.get(POKEAPI_URL + "/" + pokemon)
+            data = response.json()
+            cache_pokemon_json(pokemon, data)
+            return data
     
     except requests.exceptions.RequestException as e:
         # if the pokemon name fails it is most likely a different form of the pokemon with a hyphenated name
-        print(f"the pokemon {pokemon} may have another form. Checking...")
+        # print(f"the pokemon {pokemon} may have another form. Checking...")
         try:
             pokemon = pokemon.split("-")[0]
-            response = requests.get(POKEAPI_URL + "/" + pokemon)
-            return response.json()
+
+            # check if it is cached
+            cache_path = os.path.join(CACHE_DIR, f"{pokemon}.json")
+            if os.path.exists(cache_path):
+                with open(cache_path, 'r') as f:
+                    return json.load(f)
+            else:
+                response = requests.get(POKEAPI_URL + "/" + pokemon)
+                data = response.json()
+                cache_pokemon_json(pokemon, data)
+                return data
+        
         except requests.exceptions.RequestException as e:
             print(f"error fetching: {e}")
     
-def get_pokemon_number(pokemon):
+def get_pokemon_dex_number(pokemon):
     """
     returns the pokedex number of any given pokemon
 
@@ -213,15 +274,13 @@ def get_pokemon_number(pokemon):
 
 def main():
     ability_list = []
-
     scraper = PokemonScraper(SMOGON_URL, POKEAPI_URL)
-    scraper.init_driver()
     attributes = scraper.parse_pokemon_data()
-    scraper.close_driver()
 
     for names in attributes:
         print(names)
     print(len(attributes))
+
 
 if __name__=="__main__":
     main()
