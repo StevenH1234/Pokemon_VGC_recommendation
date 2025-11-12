@@ -3,6 +3,7 @@ import pandas as pd
 from bs4 import BeautifulSoup
 import requests
 import time
+from PIL import Image
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 import pokebase as pb
@@ -13,14 +14,19 @@ import json
 # TODO: May need to address the pokemon with forms and how to id them in the data frame.
 # TODO: Be more specific about the exceptions being reaised (Structured logging instead of prints). 
 # TODO: too many API calls, we need a caching system. 
+# TODO: Lets look into other caching methods. To make a complete cache clearage a non problem
+# TODO: add comments for new code. 
+# TODO: Separate the caching logic from the scraper logic
 
 # TODO: Probably only want to init the driver when parsing the data. If the cache exists we dont need the webdriver
 # TODO: Either get the IDs and save them so we can access pokeapi's sprites or just go with the models from the smogon.(will take more time but will look best with the API sprites)
 
 SMOGON_URL = "https://www.smogon.com/dex/sv/pokemon/"
 POKEAPI_URL = "https://pokeapi.co/api/v2/pokemon-species/"
+SPRITE_URL = "https://www.smogon.com/dex/media/sprites/xy/"
 CACHE_DIR = "pokemon_cache"
 SMOGON_CACHE_DIR = "smogon_cache"
+SPRITES_CACHE_DIR = "sprites_cache"
 TYPES = ['Fire', 'Water', 'Grass', 'Electric', 'Ground', 'Rock', 'Normal', 'Bug', 'Flying', 'Ice', 'Ghost', 'Dark', 'Fighting', 'Psychic', 'Fairy', 'Steel', 'Dragon', 'Poison', 'None']
 FORMATS = ['Uber', 'OU', 'UU', 'RU', 'NU', 'PU', 'ZU', 'AG', 'NFE', 'LC', 'UUBL', 'RUBL', 'NUBL', 'PUBL', 'ZUBL']
 
@@ -182,10 +188,18 @@ class PokemonScraper():
             if abilities == 1:
                 new_attr_list.insert(format_idx, "None")
                 new_attr_list.insert(format_idx+1, "None")
+
+            # add a pokemon's sprite
+            if " " in attr_list[0]:
+                pokemon = attr_list[0].replace(" ", "-")
+            else:
+                pokemon = attr_list[0]
+            new_attr_list.append(f"{SPRITES_CACHE_DIR}/{pokemon}.gif")
+
         else:
             print(f"removed {attr_list}")
         
-        new_attr_list
+        # add the local links here
         return new_attr_list
 
 def cache_pokemon_json(pokemon, json_data):
@@ -231,8 +245,10 @@ def get_pokemon(pokemon):
              with open(cache_path, 'r') as f:
                  return json.load(f)
         else:
+            ("caching...\n")
             response = requests.get(POKEAPI_URL + "/" + pokemon)
             data = response.json()
+            save_sprite(pokemon)
             cache_pokemon_json(pokemon, data)
             return data
     
@@ -255,6 +271,24 @@ def get_pokemon(pokemon):
         
         except requests.exceptions.RequestException as e:
             print(f"error fetching: {e}")
+
+def save_sprite(pokemon):
+    os.makedirs(SPRITES_CACHE_DIR, exist_ok=True)
+
+    cache_path = os.path.join(SPRITES_CACHE_DIR, f"{pokemon}.gif")
+    if os.path.exists(cache_path):
+        return
+    
+    url = f"{SPRITE_URL}{pokemon.lower()}.gif"
+    print(url)
+    response = requests.get(url)
+    if response.status_code == 200:
+        with open(cache_path, "wb") as f:
+            f.write(response.content)
+    else:
+        print("failed to download")
+
+    
     
 def get_pokemon_dex_number(pokemon):
     """
@@ -280,7 +314,8 @@ def main():
     for names in attributes:
         print(names)
     print(len(attributes))
-
+    # img = Image.open('sprites_cache/Golett.gif')
+    # img.show()
 
 if __name__=="__main__":
     main()
