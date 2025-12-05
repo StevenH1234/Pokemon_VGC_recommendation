@@ -9,6 +9,7 @@ from selenium.webdriver.common.by import By
 import pokebase as pb
 import os
 import json
+import caching as c
 
 # TODO: code works well for scraping the SV era of pokemon competitive play, but not others. Adapt the code to account for each generation of pokemon (champions and gen 10)
 # TODO: May need to address the pokemon with forms and how to id them in the data frame.
@@ -24,9 +25,6 @@ import json
 SMOGON_URL = "https://www.smogon.com/dex/sv/pokemon/"
 POKEAPI_URL = "https://pokeapi.co/api/v2/pokemon-species/"
 SPRITE_URL = "https://www.smogon.com/dex/media/sprites/xy/"
-CACHE_DIR = "pokemon_cache"
-SMOGON_CACHE_DIR = "smogon_cache"
-SPRITES_CACHE_DIR = "sprites_cache"
 TYPES = ['Fire', 'Water', 'Grass', 'Electric', 'Ground', 'Rock', 'Normal', 'Bug', 'Flying', 'Ice', 'Ghost', 'Dark', 'Fighting', 'Psychic', 'Fairy', 'Steel', 'Dragon', 'Poison', 'None']
 FORMATS = ['Uber', 'OU', 'UU', 'RU', 'NU', 'PU', 'ZU', 'AG', 'NFE', 'LC', 'UUBL', 'RUBL', 'NUBL', 'PUBL', 'ZUBL']
 
@@ -68,11 +66,8 @@ class PokemonScraper():
         """
 
         # if the smogon cache contains the list, load data from the cache
-        smogon_cache_path = os.path.join(SMOGON_CACHE_DIR, "data_list.json")
-        if os.path.exists(smogon_cache_path):
-            print("path exists... driver is not scrolling")
-            with open(smogon_cache_path, 'r') as f:
-                return json.load(f)
+        if cache := c.load_from_smogon():
+            return cache
         
         # init variables
         pokemon_data_list = set()       
@@ -83,7 +78,6 @@ class PokemonScraper():
         current_height = 0
 
         try:
-            
             # scroll until the webpage reaches part of the table that has a "DexNonstd" class name
             while current_height < scroll_height:
                 current_height += window_height
@@ -104,9 +98,8 @@ class PokemonScraper():
 
             # dump the data into the cache
             pokemon_data_list = list(pokemon_data_list)
-            smogon_cache_path = os.path.join(SMOGON_CACHE_DIR, "data_list.json")
-            with open(smogon_cache_path, "w") as f:
-                json.dump(pokemon_data_list, f, indent=4)
+            smogon_cache_path = os.path.join(c.get_root("smogon"), "data_list.json")
+            c.dump_in_cache(smogon_cache_path, pokemon_data_list)
 
             self.close_driver()
             return pokemon_data_list
@@ -174,7 +167,7 @@ class PokemonScraper():
             if new_attr_list[3] not in TYPES: 
                 new_attr_list.insert(3, "None")
 
-            # Normalize abilities (Accounting for hidden ability and second ability)
+            # Normalize abilities (Accounting for hidden ability and second ability and second hidden ability)
             abilities = 0
             format_idx = 0
             for i in range(4, len(new_attr_list)):
@@ -183,10 +176,14 @@ class PokemonScraper():
                     break
                 abilities += 1
             
+            if abilities == 3:
+                new_attr_list.insert(format_idx, "None")
             if abilities == 2:
                 new_attr_list.insert(format_idx-1, "None")
+                new_attr_list.insert(format_idx+1, "None")
             if abilities == 1:
                 new_attr_list.insert(format_idx, "None")
+                new_attr_list.insert(format_idx+1, "None")
                 new_attr_list.insert(format_idx+1, "None")
 
             # add a pokemon's sprite
@@ -194,30 +191,13 @@ class PokemonScraper():
                 pokemon = attr_list[0].replace(" ", "-")
             else:
                 pokemon = attr_list[0]
-            new_attr_list.append(f"{SPRITES_CACHE_DIR}/{pokemon}.gif")
+            new_attr_list.append(f"{c.get_root("sprites")}/{pokemon}.gif")
 
         else:
             print(f"removed {attr_list}")
         
         # add the local links here
         return new_attr_list
-
-def cache_pokemon_json(pokemon, json_data):
-    """
-    creates a dedicated path for the pokemon json file and stores it in the local cache
-
-    Args:
-        pokemon (str): name of the pokemon as a string
-        json_data (dict): python json_data dictionary object containing data from PokeAPI
-    """
-    os.makedirs(CACHE_DIR, exist_ok=True)
-
-    cache_path = os.path.join(CACHE_DIR, f"{pokemon}.json")
-
-    with open(cache_path, "w") as f:
-        json.dump(json_data, f, indent=4)
-    # print("cached complete...")
-
 
 def get_pokemon(pokemon):
 
@@ -240,16 +220,18 @@ def get_pokemon(pokemon):
             pokemon = pokemon.replace(' ', '-')
 
         # check if it is cached
-        cache_path = os.path.join(CACHE_DIR, f"{pokemon}.json")
-        if os.path.exists(cache_path):
-             with open(cache_path, 'r') as f:
-                 return json.load(f)
+        # cache_path = os.path.join(c.get_root("pokemon"), f"{pokemon}.json")
+        # if os.path.exists(cache_path):
+        #      return c.load_from_cache(cache_path)
+        if cache := c.load_from_pokemon(pokemon):
+            return cache
         else:
             ("caching...\n")
             response = requests.get(POKEAPI_URL + "/" + pokemon)
             data = response.json()
             save_sprite(pokemon)
-            cache_pokemon_json(pokemon, data)
+            cache_path = os.path.join(c.get_root("pokemon"), f"{pokemon}.json")
+            c.dump_in_cache(cache_path, data)
             return data
     
     except requests.exceptions.RequestException as e:
@@ -259,32 +241,28 @@ def get_pokemon(pokemon):
             pokemon = pokemon.split("-")[0]
 
             # check if it is cached
-            cache_path = os.path.join(CACHE_DIR, f"{pokemon}.json")
+            cache_path = os.path.join(c.get_root("pokemon"), f"{pokemon}.json")
             if os.path.exists(cache_path):
-                with open(cache_path, 'r') as f:
-                    return json.load(f)
+                return c.load_from_cache(cache_path)
             else:
                 response = requests.get(POKEAPI_URL + "/" + pokemon)
                 data = response.json()
-                cache_pokemon_json(pokemon, data)
+                cache_path = os.path.join(c.get_root("pokemon"), f"{pokemon}.json")
+                c.dump_in_cache(cache_path, data)
                 return data
         
         except requests.exceptions.RequestException as e:
             print(f"error fetching: {e}")
 
 def save_sprite(pokemon):
-    os.makedirs(SPRITES_CACHE_DIR, exist_ok=True)
-
-    cache_path = os.path.join(SPRITES_CACHE_DIR, f"{pokemon}.gif")
+    cache_path = os.path.join(c.get_root("sprites"), f"{pokemon}.gif")
     if os.path.exists(cache_path):
         return
-    
+
     url = f"{SPRITE_URL}{pokemon.lower()}.gif"
-    print(url)
     response = requests.get(url)
     if response.status_code == 200:
-        with open(cache_path, "wb") as f:
-            f.write(response.content)
+        c.dump_gif_in_cache(response.content)
     else:
         print("failed to download")
 
@@ -307,13 +285,35 @@ def get_pokemon_dex_number(pokemon):
     return None
 
 def main():
-    ability_list = []
+    column_headers = ['dex number',
+                      'name', 
+                      'primary type', 
+                      'secondary type', 
+                      'ability 1', 
+                      'ability 2', 
+                      'h ability', 
+                      'h2 ability',
+                      'ruleset', 
+                      'hp', 
+                      'atk', 
+                      'def', 
+                      'spa', 
+                      'spd', 
+                      'spe', 
+                      'sprite']
+    
     scraper = PokemonScraper(SMOGON_URL, POKEAPI_URL)
     attributes = scraper.parse_pokemon_data()
 
     for names in attributes:
-        print(names)
-    print(len(attributes))
+        if len(names) != 15:
+            print(f"{names} --- {len(names)}")
+
+    pokemon_df = pd.DataFrame(attributes, columns=column_headers)
+    pokemon_df.to_csv("pokemon_data.csv", index=True)
+
+    print("-----------------")
+    print(pokemon_df.head)
     # img = Image.open('sprites_cache/Golett.gif')
     # img.show()
 

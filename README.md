@@ -45,3 +45,11 @@ ISSUES FOUND:
 - all paradox forms exist in pokeAPI but the way they are deonted in smogon it cannot be accessed
 - NOT every pokemon is in scarlet and violet. we would have to account for different games and formats
 - Think about the regulations (reg I, reg H, reg G, etc.)
+
+NOTES: 
+
+- 11/20 so it seems like I'm working on trying to get the gifs added to the list so that I can finally create the data frame. The issue that I am facing is that some of the pokemon with dashes in their name, I saved as the originial pokemon eventhough they should be separate. To fix this i need to account for pokemon with dashes or other special characters in their name nad make a json for them. (look at the pokemon cache and make sure we're populating the jsons properly)
+- 11/20 looking at the results, I can see that the lists look okay. the information for alternate form pokemon is alright.
+
+ex.
+[74, 'Geodude-Alola', 'Rock', 'Electric', 'Magnet Pull', 'Galvanize', 'Sturdy', 'LC', '40', '80', '100', '30', '30', '20', 'sprites_cache/Geodude-Alola.gif']
